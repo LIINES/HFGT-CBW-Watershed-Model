@@ -1,0 +1,104 @@
+README: Outlet Point Processing Workflow
+=======================================
+
+This document outlines the workflow for processing outlet points in a river network. Each step describes the Python script to run, its purpose, input/output files, and any dependencies.
+
+To ensure smooth execution, follow the steps in the specified order.
+
+---
+
+1. Script: calculate_flow_accumulation.py
+   - Purpose: Perform a flow accumulation analysis using DEM data for the Chesapeake Bay region.
+   - Input:
+     - DEM: 0-Data/1-RawData/0-GIS/QGIS/DEM/output_SRTMGL1.tif
+   - Output:
+     - Flow Accumulation Raster: 0-Data/1-RawData/0-GIS/QGIS/DEM/processed/flow_accumulation.tif
+
+2. Script: find_accumulation_outlet_points.py
+   - Purpose: Identify temporary outlet points as the locations with the highest flow accumulation within each river segment polygon.
+   - Input:
+     - Flow Accumulation Raster: 0-Data/1-RawData/0-GIS/QGIS/DEM/processed/flow_accumulation.tif
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+   - Output:
+     - Temporary Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/OutletPoints/outlet_points.shp
+
+3. Script: convert_segments_to_lines.py
+   - Purpose: Convert river segment polygons into lines to facilitate intersection calculations.
+   - Input:
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+   - Output:
+     - River Segment Lines: 0-Data/1-RawData/0-GIS/QGIS/RiverSegmentLines/RiverSegmentLines.shp
+
+4. Script: find_streamline_intersections.py
+   - Purpose: Identify intersection points between streamlines and river segment polygon boundaries.
+   - Input:
+     - Stream Lines: 0-Data/1-RawData/0-GIS/QGIS/Streams/smooth_streams.zip
+     - River Segment Lines: 0-Data/1-RawData/0-GIS/QGIS/RiverSegmentLines/RiverSegmentLines.shp
+   - Output:
+     - Intersection Points: 0-Data/1-RawData/0-GIS/QGIS/IntersectionPoints/intersection_points.shp
+
+5. Script: assign_intersection_points_to_segments.py
+   - Purpose: Assign intersection points to the corresponding river segment polygons.
+   - Input:
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+     - Intersection Points: 0-Data/1-RawData/0-GIS/QGIS/IntersectionPoints/intersection_points.shp
+   - Output:
+     - Assigned Intersection Points: 0-Data/1-RawData/0-GIS/QGIS/IntersectionPoints/assigned_intersection_points.shp
+
+6. Script: snap_outlet_points_to_estuary.py
+   - Purpose: Snap outlet points to the nearest intersection point touching the estuary if their river segment polygon is adjacent to the estuary.
+   - Input:
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+     - Assigned Intersection Points: 0-Data/1-RawData/0-GIS/QGIS/IntersectionPoints/assigned_intersection_points.shp
+     - Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/OutletPoints/outlet_points.shp
+     - Estuary Boundary: 0-Data/1-RawData/0-GIS/QGIS/Coastline/Chesapeake_Bay_Shoreline_High_Resolution.zip
+   - Output:
+     - Snapped Outlet Points (Estuary): 0-Data/1-RawData/0-GIS/QGIS/OutletPointSnapping/SnapByEstuary/SnappedOutletPointsEstuary.shp
+
+7. Script: snap_outlet_points_to_downstream_connections.py
+   - Purpose: Snap outlet points to the nearest valid intersection point within the corresponding river segment polygon, considering downstream connections.
+   - Input:
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+     - Snapped Outlet Points (Estuary): 0-Data/1-RawData/0-GIS/QGIS/OutletPointSnapping/SnapByEstuary/SnappedOutletPointsEstuary.shp
+     - Intersection Points: 0-Data/1-RawData/0-GIS/QGIS/IntersectionPoints/intersection_points.shp
+     - Estuary Boundary: 0-Data/1-RawData/0-GIS/QGIS/Coastline/Chesapeake_Bay_Shoreline_High_Resolution.zip
+   - Output:
+     - Snapped Outlet Points (Final): 0-Data/1-RawData/0-GIS/QGIS/OutletPointSnapping/SnappedToDownstreamIntersection/SnappedToDownstreamIntersection.shp
+
+8. Script: rename_outlets_adjacent_to_estuary.py
+   - Purpose: Rename `RiverSeg` identifiers for polygons and outlet points adjacent to the estuary to ensure consistent naming conventions.
+   - Input:
+     - Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/OutletPointSnapping/SnappedToDownstreamIntersection/SnappedToDownstreamIntersection.shp
+     - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RiverSegments/RiverSegmentLayer.shp
+     - Estuary Boundary: 0-Data/1-RawData/0-GIS/QGIS/Coastline/Chesapeake_Bay_Shoreline_High_Resolution.zip
+   - Output:
+     - Renamed Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPoints/RenamedPoints.shp
+     - Renamed Polygons: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPolygons/RenamedPolygons.shp
+
+9. Script: rename_land_river_segments.py
+   - Purpose: Update `RiverSeg` identifiers for land-river segment polygons based on renamed river segments.
+   - Input:
+     - Renamed River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPolygons/RenamedPolygons.shp
+     - Land-River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/P6Beta_v3_LRSegs_081516.zip
+   - Output:
+     - Updated Land-River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedLRSegments/RenamedLRSegments.shp
+
+10. Script: create_flow_lines_from_river_segment_ID.py
+    - Purpose: Generate flow lines between outlet points based on `RiverSeg` IDs.
+    - Input:
+      - Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPoints/RenamedPoints.shp
+      - Upstream Connections CSV: 0-Data/1-RawData/0-GIS/QGIS/UpstreamLines/upstreamLines.csv
+    - Output:
+      - Flow Lines: 0-Data/1-RawData/0-GIS/QGIS/OutletLinesNew/outletLinesNewRenamed.shp
+
+11. Script: connect_outlet_lines_to_estuary.py
+    - Purpose: Create flow lines connecting `0001` outlet points to the nearest adjacent `0000` outlet points.
+    - Input:
+      - River Segment Polygons: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPolygons/RenamedPolygons.shp
+      - Outlet Points: 0-Data/1-RawData/0-GIS/QGIS/RenamedPointsPolygons/RenamedPoints/RenamedPoints.shp
+    - Output:
+      - Connections to Estuary: 0-Data/1-RawData/0-GIS/QGIS/OutletLinesNew/OutletLinesEstuaryNew/OutletLinesEstuaryNew.shp
+
+---
+
+Follow this sequence to ensure the workflow executes without errors. Verify outputs after each step before proceeding.
