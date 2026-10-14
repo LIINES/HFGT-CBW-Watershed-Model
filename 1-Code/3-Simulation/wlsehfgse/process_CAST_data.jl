@@ -233,9 +233,18 @@ N_app_tot = Dict(String(r.CountyKey)=>Float64(r.N_app_tot) for r in eachrow(appl
 P_app_tot = Dict(String(r.CountyKey)=>Float64(r.P_app_tot) for r in eachrow(apply_by_county))
 
 # EOS/EOT by county
+# Sectors whose loads are compared with the model. The model's only inputs are Agriculture and
+# Developed applications, so EOS/EOT targets are restricted to those sectors. (Before 2026-10 all
+# sectors were summed, including Natural, Septic and Wastewater, which have no inputs in the model.)
+# Set EOS_EOT_SECTORS = nothing in Julia before include(...) to use all sectors.
+if !@isdefined(EOS_EOT_SECTORS); EOS_EOT_SECTORS = ["Agriculture", "Developed"]; end
+
 function county_eos_eot(df::DataFrame)
     # Filter out rows with missing CountyKey first
     df_valid = filter(row -> !ismissing(row.CountyKey), df)
+    if EOS_EOT_SECTORS !== nothing
+        df_valid = filter(row -> !ismissing(row.Sector) && String(row.Sector) in EOS_EOT_SECTORS, df_valid)
+    end
     g = groupby(df_valid, :CountyKey)
     out = DataFrame(CountyKey=String[], EOS_N=Float64[], EOS_P=Float64[], EOT_N=Float64[], EOT_P=Float64[])
     for sdf in g
@@ -248,6 +257,9 @@ function county_eos_eot(df::DataFrame)
     out
 end
 eoseot = county_eos_eot(loads_df)
+println("EOS/EOT sectors: ", EOS_EOT_SECTORS === nothing ? "all" : join(EOS_EOT_SECTORS, ", "),
+        " | totals (M lb): EOS N=", round(sum(eoseot.EOS_N)/1e6; digits=2), " P=", round(sum(eoseot.EOS_P)/1e6; digits=2),
+        " | EOT N=", round(sum(eoseot.EOT_N)/1e6; digits=2), " P=", round(sum(eoseot.EOT_P)/1e6; digits=2))
 EOS_N = Dict(String(r.CountyKey)=>Float64(r.EOS_N) for r in eachrow(eoseot))
 EOS_P = Dict(String(r.CountyKey)=>Float64(r.EOS_P) for r in eachrow(eoseot))
 EOT_N = Dict(String(r.CountyKey)=>Float64(r.EOT_N) for r in eachrow(eoseot))
