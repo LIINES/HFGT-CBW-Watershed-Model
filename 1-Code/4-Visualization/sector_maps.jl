@@ -70,7 +70,8 @@ axNsec = CM.Axis(figNsec[1,1],
 )
 pltNsec = CM.poly!(axNsec, polygon_data.geometry;
     color = polygon_data.N_ag_share,
-    colormap = ColorSchemes.turbo,
+    colormap = ColorSchemes.bwr,
+    colorrange = (0, 1),
     strokecolor = :black, strokewidth = 0.25
 )
 
@@ -99,7 +100,8 @@ axPsec = CM.Axis(figPsec[1,1],  # Changed from axNsec
 )
 pltPsec = CM.poly!(axPsec, polygon_data.geometry;  # Changed from axNsec and pltNsec
     color = polygon_data.P_ag_share,  # Changed from N_ag_share
-    colormap = ColorSchemes.turbo,
+    colormap = ColorSchemes.bwr,
+    colorrange = (0, 1),
     strokecolor = :black, strokewidth = 0.25
 )
 
@@ -130,7 +132,8 @@ axNsec = CM.Axis(figBoth[1,1],
 
 pltNsec = CM.poly!(axNsec, polygon_data.geometry;
     color = polygon_data.N_ag_share,
-    colormap = ColorSchemes.turbo,
+    colormap = ColorSchemes.bwr,
+    colorrange = (0, 1),
     strokecolor = :black, strokewidth = 0.25
 )
 # CM.hidedecorations!(axNsec, ticks=false, grid=false)
@@ -152,7 +155,8 @@ axPsec = CM.Axis(figBoth[1,3],
 
 pltPsec = CM.poly!(axPsec, polygon_data.geometry;
     color = polygon_data.P_ag_share,
-    colormap = ColorSchemes.turbo,
+    colormap = ColorSchemes.bwr,
+    colorrange = (0, 1),
     strokecolor = :black, strokewidth = 0.25
 )
 # CM.hidedecorations!(axPsec, ticks=false, grid=false)

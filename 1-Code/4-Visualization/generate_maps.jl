@@ -34,6 +34,6 @@ const cmap_P_custom = ColorScheme([
 choose_cmap(nutrient::Symbol) = nutrient === :N ? cmap_N_custom : cmap_P_custom
 
 include("pre_process_maps.jl")
-include("accumulation_maps.jl")
-include("sector_maps.jl")
+# include("accumulation_maps.jl")
+# include("sector_maps.jl")
 include("transport_maps.jl")

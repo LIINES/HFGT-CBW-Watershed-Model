@@ -52,7 +52,8 @@ function plot_transport_for(
     lmin, lmax = log10(Umin), log10(Umax)
     lognorm(u) = (log10(u) - lmin) / (lmax - lmin)
 
-    cmap = choose_cmap(nutrient)
+    # cmap = choose_cmap(nutrient)
+    linecolor = nutrient == :N ? N_STROKE : P_STROKE
 
     # ── draw - changed to 900x1000 like other maps
     fig = CM.Figure(size = (900, 1000))
@@ -70,10 +71,13 @@ function plot_transport_for(
     for row in eachrow(df)
         pts = row.line; isempty(pts) && continue
         xs = first.(pts); ys = last.(pts)
-        t  = clamp(lognorm(row.U), 0, 1)
-        c  = get(cmap, t)
-        lw = (coalesce(row.line_type, "outlet_to_outlet") == "outlet_to_estuary") ? 3.8 : 2.8
-        CM.lines!(ax, xs, ys; linewidth=lw, color=c)
+        t = clamp(lognorm(row.U), 0, 1)
+        # Flow magnitude encoded as width
+        lw = 0.75 + 5.25 * sqrt(t)
+        CM.lines!(ax, xs, ys;
+            linewidth = lw,
+            color = linecolor
+        )
     end
 
     # outlet markers (kept subtle)
@@ -88,27 +92,20 @@ function plot_transport_for(
     h2 = CM.lines!(ax, [NaN, NaN], [NaN, NaN]; color=:gray, linewidth=3.8)
     # CM.axislegend(ax, [h1, h2], ["Outlet → Outlet", "Outlet → Estuary"]; position=:lb, framevisible=true)
 
-    # tick values based on nutrient - mapped to normalized log space
-    if nutrient == :N
-        raw_ticks = [1e-8, 1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6]
-        ticklabs = ["10⁻⁸", "10⁻⁶", "10⁻⁴", "10⁻²", "10⁰", "10²", "10⁴", "10⁶"]
-    else  # Phosphorus
-        raw_ticks = [1e-8, 1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4]
-        ticklabs = ["10⁻⁸", "10⁻⁶", "10⁻⁴", "10⁻²", "10⁰", "10²", "10⁴"]
-    end
-    
-    # Filter ticks to only those within data range and map to actual values
-    valid_ticks = filter(t -> Umin <= t <= Umax, raw_ticks)
-    valid_labels = [ticklabs[i] for (i, t) in enumerate(raw_ticks) if Umin <= t <= Umax]
+    flow_handles = [
+        CM.lines!(ax,[NaN,NaN],[NaN,NaN]; color=linecolor, linewidth=1),
+        CM.lines!(ax,[NaN,NaN],[NaN,NaN]; color=linecolor, linewidth=3),
+        CM.lines!(ax,[NaN,NaN],[NaN,NaN]; color=linecolor, linewidth=5),
+        CM.lines!(ax,[NaN,NaN],[NaN,NaN]; color=linecolor, linewidth=7)
+    ]
 
-    CM.Colorbar(fig[1,2], 
-        colormap=cmap, 
-        limits=(Umin, Umax),
-        ticks=(valid_ticks, valid_labels),
-        vertical=true,
-        width=15,
-        label="log10[Flow Magnitude (lb/year)]",
-        scale=log10  # This makes the colorbar logarithmic!
+    CM.axislegend(
+        ax,
+        flow_handles,
+        ["10⁻²⁴ lb/yr", "10⁻¹⁴ lb/yr", "10⁻⁴ lb/yr", "10⁶ lb/yr"];
+        title="Flow Magnitude\n(lb yr⁻¹, log₁₀-scaled)",
+        position=:rb,
+        framevisible=true
     )
     
     # Reduce gap between axis and colorbar
@@ -164,12 +161,12 @@ function plot_transport_both(outdir::String)
     UminP, UmaxP = minimum(UposP), maximum(UposP)
     lminP, lmaxP = log10(UminP), log10(UmaxP)
     lognormP(u) = (log10(u) - lminP) / (lmaxP - lminP)
-    
-    cmapN = choose_cmap(:N)
-    cmapP = choose_cmap(:P)
+
+    linecolorN = N_STROKE
+    linecolorP = P_STROKE
     
     # ── draw side-by-side
-    fig = CM.Figure(size = (1800, 1000))
+    fig = CM.Figure(size = (1600, 1000))
     
     # --- Nitrogen (left) ---
     axN = CM.Axis(fig[1,1];
@@ -186,10 +183,14 @@ function plot_transport_both(outdir::String)
     for row in eachrow(dfN)
         pts = row.line; isempty(pts) && continue
         xs = first.(pts); ys = last.(pts)
+
         t = clamp(lognormN(row.U), 0, 1)
-        c = get(cmapN, t)
-        lw = (coalesce(row.line_type, "outlet_to_outlet") == "outlet_to_estuary") ? 3.8 : 2.8
-        CM.lines!(axN, xs, ys; linewidth=lw, color=c)
+        lw = 0.75 + 5.25 * sqrt(t)
+
+        CM.lines!(axN, xs, ys;
+            linewidth = lw,
+            color = linecolorN
+        )
     end
     
     outpts_xy = [GeoInterface.coordinates(GeoInterface.geometry(r)) for r in out_pts]
@@ -202,24 +203,8 @@ function plot_transport_both(outdir::String)
     h2 = CM.lines!(axN, [NaN, NaN], [NaN, NaN]; color=:gray, linewidth=3.8)
     # CM.axislegend(axN, [h1, h2], ["Outlet → Outlet", "Outlet → Estuary"]; position=:lb, framevisible=true)
     
-    # For Nitrogen colorbar - with log scale
-    raw_ticksN = [1e-8, 1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4, 1e6]
-    ticklabsN_all = ["10⁻⁸", "10⁻⁶", "10⁻⁴", "10⁻²", "10⁰", "10²", "10⁴", "10⁶"]
-    valid_ticksN = filter(t -> UminN <= t <= UmaxN, raw_ticksN)
-    valid_labsN = [ticklabsN_all[i] for (i, t) in enumerate(raw_ticksN) if UminN <= t <= UmaxN]
-    
-    CM.Colorbar(fig[1,2], 
-        colormap=cmapN, 
-        limits=(UminN, UmaxN),
-        ticks=(valid_ticksN, valid_labsN),
-        vertical=true,
-        width=15,
-        label="log10[Flow Magnitude (lb/year)]",
-        scale=log10
-    )
-    
     # --- Phosphorus (right) ---
-    axP = CM.Axis(fig[1,3];
+    axP = CM.Axis(fig[1,2];
         xlabel="Easting (m)", ylabel="Northing (m)",
         title="Phosphorus Transportation Flows", aspect=DataAspect()
     )
@@ -233,10 +218,14 @@ function plot_transport_both(outdir::String)
     for row in eachrow(dfP)
         pts = row.line; isempty(pts) && continue
         xs = first.(pts); ys = last.(pts)
+
         t = clamp(lognormP(row.U), 0, 1)
-        c = get(cmapP, t)
-        lw = (coalesce(row.line_type, "outlet_to_outlet") == "outlet_to_estuary") ? 3.8 : 2.8
-        CM.lines!(axP, xs, ys; linewidth=lw, color=c)
+        lw = 0.75 + 5.25 * sqrt(t)
+
+        CM.lines!(axP, xs, ys;
+            linewidth = lw,
+            color = linecolorP
+        )
     end
     
     if !isempty(outpts_xy)
@@ -247,23 +236,39 @@ function plot_transport_both(outdir::String)
     h1 = CM.lines!(axP, [NaN, NaN], [NaN, NaN]; color=:gray, linewidth=2.8)
     h2 = CM.lines!(axP, [NaN, NaN], [NaN, NaN]; color=:gray, linewidth=3.8)
     # CM.axislegend(axP, [h1, h2], ["Outlet → Outlet", "Outlet → Estuary"]; position=:lb, framevisible=true)
-    
-    # For Phosphorus colorbar - with log scale
-    raw_ticksP = [1e-8, 1e-6, 1e-4, 1e-2, 1e0, 1e2, 1e4]
-    ticklabsP_all = ["10⁻⁸", "10⁻⁶", "10⁻⁴", "10⁻²", "10⁰", "10²", "10⁴"]
-    valid_ticksP = filter(t -> UminP <= t <= UmaxP, raw_ticksP)
-    valid_labsP = [ticklabsP_all[i] for (i, t) in enumerate(raw_ticksP) if UminP <= t <= UmaxP]
-    
-    CM.Colorbar(fig[1,4], 
-        colormap=cmapP, 
-        limits=(UminP, UmaxP),
-        ticks=(valid_ticksP, valid_labsP),
-        vertical=true,
-        width=15,
-        label="log10[Flow Magnitude (lb/year)]",
-        scale=log10
+        
+    flow_handles_N = [
+        CM.lines!(axN,[NaN,NaN],[NaN,NaN]; color=linecolorN, linewidth=1),
+        CM.lines!(axN,[NaN,NaN],[NaN,NaN]; color=linecolorN, linewidth=3),
+        CM.lines!(axN,[NaN,NaN],[NaN,NaN]; color=linecolorN, linewidth=5),
+        CM.lines!(axN,[NaN,NaN],[NaN,NaN]; color=linecolorN, linewidth=7)
+    ]
+
+    flow_handles_P = [
+        CM.lines!(axP,[NaN,NaN],[NaN,NaN]; color=linecolorP, linewidth=1),
+        CM.lines!(axP,[NaN,NaN],[NaN,NaN]; color=linecolorP, linewidth=3),
+        CM.lines!(axP,[NaN,NaN],[NaN,NaN]; color=linecolorP, linewidth=5),
+        CM.lines!(axP,[NaN,NaN],[NaN,NaN]; color=linecolorP, linewidth=7)
+    ]
+
+    CM.axislegend(
+        axN,
+        flow_handles_N,
+        ["10⁻²⁴ lb/yr", "10⁻¹⁴ lb/yr", "10⁻⁴ lb/yr", "10⁶ lb/yr"];
+        title="Flow Magnitude\n(lb yr⁻¹, log₁₀-scaled)",
+        position=:rb,
+        framevisible=true
     )
-    
+
+    CM.axislegend(
+        axP,
+        flow_handles_P,
+        ["10⁻²⁴ lb/yr", "10⁻¹⁴ lb/yr", "10⁻⁴ lb/yr", "10⁶ lb/yr"];
+        title="Flow Magnitude\n(lb yr⁻¹, log₁₀-scaled)",
+        position=:rb,
+        framevisible=true
+    )
+
     CM.colgap!(fig.layout, 0)
     CM.rowgap!(fig.layout, 0)
     

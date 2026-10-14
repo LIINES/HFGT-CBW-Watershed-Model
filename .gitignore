@@ -1,0 +1,9 @@
+/*
+!/1-Code/
+!/README.md
+!/.gitignore
+.DS_Store
+._*
+__pycache__/
+*.pyc
+.idea/

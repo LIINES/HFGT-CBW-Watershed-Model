@@ -205,14 +205,14 @@ land_maskN   = [k == :land for k in datN.kind]
 outlet_maskN = .!land_maskN
 if any(land_maskN)
     CM.scatter!(axN_QB, datN.x[land_maskN], datN.y[land_maskN];
-        markersize=sizesN[land_maskN], color=N_FILL, strokewidth=0)
+        markersize=sizesN[land_maskN], color=N_STROKE, strokewidth=0)
 end
 if any(outlet_maskN)
     CM.scatter!(axN_QB, datN.x[outlet_maskN], datN.y[outlet_maskN];
         markersize=sizesN[outlet_maskN], color=:transparent, strokecolor=N_STROKE, strokewidth=1.0)
 end
 add_size_legend!(axN_QB, vmaxN; title_str="Mass of Nitrogen\n(million lbs)", smin=3.0, smax=26.0,
-                 markercolor=N_FILL, pos=:lt)
+                 markercolor=N_STROKE, pos=:lt)
 
 # P map with million pounds
 datP   = collect_QB_points_enhanced(:P; scale_to_millions=true)
@@ -231,14 +231,14 @@ land_maskP   = [k == :land for k in datP.kind]
 outlet_maskP = .!land_maskP
 if any(land_maskP)
     CM.scatter!(axP_QB, datP.x[land_maskP], datP.y[land_maskP];
-        markersize=sizesP[land_maskP], color=P_FILL, strokewidth=0)
+        markersize=sizesP[land_maskP], color=P_STROKE, strokewidth=0)
 end
 if any(outlet_maskP)
     CM.scatter!(axP_QB, datP.x[outlet_maskP], datP.y[outlet_maskP];
         markersize=sizesP[outlet_maskP], color=:transparent, strokecolor=P_STROKE, strokewidth=1.0)
 end
 add_size_legend!(axP_QB, vmaxP; title_str="Mass of Phosphorus\n(million lbs)", smin=3.0, smax=26.0,
-                 markercolor=P_FILL, pos=:lt)
+                 markercolor=P_STROKE, pos=:lt)
 
 # Save accumulation = QB bubble maps
 mkpath(outdir)
@@ -261,14 +261,14 @@ land_maskN_both = [k == :land for k in datN.kind]
 outlet_maskN_both = .!land_maskN_both
 if any(land_maskN_both)
     CM.scatter!(axN_both, datN.x[land_maskN_both], datN.y[land_maskN_both];
-        markersize=sizesN[land_maskN_both], color=N_FILL, strokewidth=0)
+        markersize=sizesN[land_maskN_both], color=N_STROKE, strokewidth=0)
 end
 if any(outlet_maskN_both)
     CM.scatter!(axN_both, datN.x[outlet_maskN_both], datN.y[outlet_maskN_both];
         markersize=sizesN[outlet_maskN_both], color=:transparent, strokecolor=N_STROKE, strokewidth=1.0)
 end
 add_size_legend!(axN_both, vmaxN; title_str="Mass of Nitrogen\n(million lbs)", smin=3.0, smax=26.0,
-                 markercolor=N_FILL, pos=:lt)
+                 markercolor=N_STROKE, pos=:lt)
 
 # Phosphorus map (right side)
 axP_both = CM.Axis(figBoth_QB[1,2], xlabel="Easting (m)", ylabel="Northing (m)",
@@ -282,14 +282,14 @@ land_maskP_both = [k == :land for k in datP.kind]
 outlet_maskP_both = .!land_maskP_both
 if any(land_maskP_both)
     CM.scatter!(axP_both, datP.x[land_maskP_both], datP.y[land_maskP_both];
-        markersize=sizesP[land_maskP_both], color=P_FILL, strokewidth=0)
+        markersize=sizesP[land_maskP_both], color=P_STROKE, strokewidth=0)
 end
 if any(outlet_maskP_both)
     CM.scatter!(axP_both, datP.x[outlet_maskP_both], datP.y[outlet_maskP_both];
         markersize=sizesP[outlet_maskP_both], color=:transparent, strokecolor=P_STROKE, strokewidth=1.0)
 end
 add_size_legend!(axP_both, vmaxP; title_str="Mass of Phosphorus\n(million lbs)", smin=3.0, smax=26.0,
-                 markercolor=P_FILL, pos=:lt)
+                 markercolor=P_STROKE, pos=:lt)
 
 # Adjust gaps and save
 CM.colgap!(figBoth_QB.layout, 0)
