@@ -22,6 +22,13 @@ SECT = ["Agriculture","Developed"]
 # For the hold-out run, type `USE_EOT = false` in Julia before include(...).
 if !@isdefined(USE_EOT); USE_EOT = true; end
 println("USE_EOT = $USE_EOT")
+# LAND_STEP: how land->outlet transport is measured.
+#   :eor     (2026-10 revision) U_land = CAST-derived edge-of-river load for the land-river segment
+#            (EOS x stream-to-river, built in build_lrs_eos.jl). County EOS is then not used again.
+#   :applied (original) U_land = land-to-water x stream-to-river x inflow (applied nutrients),
+#            plus county EOS as a separate measurement.
+if !@isdefined(LAND_STEP); LAND_STEP = :eor; end
+println("LAND_STEP = $LAND_STEP")
 
 # Use existing CountyKey coverage
 applied_keys = String.(collect(skipmissing(applied_df.CountyKey)))
@@ -179,11 +186,29 @@ inflow_expr = [
 # capDF_tr is "one DF per capability" vector (missing for accepts)
 capDF_tr = [ capDF[j] for j in transport_caps ]
 
-# New WLSEHFGSE-style residual per capability:
-# U_j[1] - DF_j * inflow_j[1] = EU_j[1]
+# Land->outlet capabilities and their edge-of-river (EOR) targets
+cap_is_N(j)  = lowercase(String(myLFES.transportProcess.ref[cap_to_transportProcess[j]])) == "nitrogen"
+cap_lrs(j)   = canon_land_lrs(String(origin_info(cap_to_transportProcess[j]).segment))
+is_land_tr   = [is_land_origin(cap_to_transportProcess[j]) for j in transport_caps]
+eor_target   = [is_land_tr[i] ? get(cap_is_N(j) ? EOR_LRS_N : EOR_LRS_P, cap_lrs(j), 0.0) : 0.0
+                for (i, j) in enumerate(transport_caps)]
+eor_target_by_cap = Dict(transport_caps[i] => eor_target[i] for i in eachindex(transport_caps) if is_land_tr[i])
+if LAND_STEP == :eor
+    n_land = count(is_land_tr)
+    n_with = count(i -> is_land_tr[i] && eor_target[i] > 0, eachindex(transport_caps))
+    println("Land->outlet caps: $n_land; with nonzero EOR target: $n_with; ",
+            "EOR targets total (M lb): N=", round(sum(eor_target[i] for i in eachindex(transport_caps) if is_land_tr[i] && cap_is_N(transport_caps[i]))/1e6; digits=2),
+            " P=", round(sum(eor_target[i] for i in eachindex(transport_caps) if is_land_tr[i] && !cap_is_N(transport_caps[i]))/1e6; digits=3))
+end
+
+# Transport measurement per capability:
+#   land->outlet (LAND_STEP = :eor):  U_j - EOR_lrs(j)          = EU_j
+#   all other transport:              U_j - DF_j * inflow_j     = EU_j
+transport_rhs = [ (LAND_STEP == :eor && is_land_tr[i]) ? AffExpr(eor_target[i]) : capDF_tr[i] * inflow_expr[i]
+                  for i in eachindex(transport_caps) ]
 @constraint(model,
     [i in eachindex(transport_caps)],
-    U[transport_caps[i], 1] - capDF_tr[i] * inflow_expr[i] == EU[transport_caps[i], 1]
+    U[transport_caps[i], 1] - transport_rhs[i] == EU[transport_caps[i], 1]
 )
 
 # Count constraints
@@ -201,7 +226,10 @@ function land2stream_caps_in_county(cnty::String, nutrient::Symbol)
     ]
 end
 
-for c in counties
+if LAND_STEP == :eor
+    println("County EOS not used as a separate measurement (already used at the land-river-segment scale).")
+end
+for c in (LAND_STEP == :eor ? String[] : counties)
     capsN = land2stream_caps_in_county(c, :N)
     if !isempty(capsN) && haskey(EOS_N, c)
         for k in 1:numTimeSteps
@@ -424,7 +452,10 @@ if termination_status(model) == MOI.OPTIMAL
     # 3. EOS (land->stream) by county
     #######################################
 
-    println("\n==== EOS (LAND->STREAM) COUNTY TOTALS ====")
+    println(LAND_STEP == :eor ? "\n==== LAND->OUTLET COUNTY TOTALS vs CAST-derived EDGE-OF-RIVER (EOS x stream-to-river) ====" :
+                                "\n==== EOS (LAND->STREAM) COUNTY TOTALS ====")
+    land_target(c, caps, nut) = LAND_STEP == :eor ? sum((eor_target_by_cap[j] for j in caps); init = 0.0) :
+                                                    (nut == :N ? EOS_N[c] : EOS_P[c])
 
     eos_rows = DataFrame(
         County = String[],
@@ -440,9 +471,9 @@ if termination_status(model) == MOI.OPTIMAL
         capsN = land2stream_caps_in_county(c, :N)
         capsP = land2stream_caps_in_county(c, :P)
 
-        yN     = hasN ? EOS_N[c] : NaN
+        yN     = hasN ? land_target(c, capsN, :N) : NaN
         yhatN  = hasN ? sumU_opt(capsN, 1) : NaN
-        yP     = hasP ? EOS_P[c] : NaN
+        yP     = hasP ? land_target(c, capsP, :P) : NaN
         yhatP  = hasP ? sumU_opt(capsP, 1) : NaN
 
         push!(eos_rows, (String(c), yN, yhatN, yP, yhatP))
