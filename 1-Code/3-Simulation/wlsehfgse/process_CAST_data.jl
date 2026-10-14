@@ -356,7 +356,9 @@ function build_factor_maps_area(dfact_df::DataFrame, basecond_df::DataFrame;
     for sdf in groupby(lrs_area, :RIV)
         A = sum(sdf.LRS_area)
         if A <= 0
-            R2B_N = R2B_P = 0.0
+            # No land area in this river segment -> CAST provides no river-to-bay factor.
+            # Mark as missing (NaN) instead of 0; handled when outlet DFs are assigned.
+            R2B_N = R2B_P = NaN
         else
             weights = sdf.LRS_area ./ A
             R2B_N = sum(weights .* [FS_LRS[String(LRS)].N_R2B for LRS in sdf.LRS])
@@ -459,6 +461,7 @@ const _EPS = 1e-12
 # Canonicalize a land LRS from origin_info to the FS_LRS key
 canon_land_lrs(s::AbstractString) = clean_lrs(replace(String(s), r"^Land Segment\s+" => ""))
 
+n_df_passthrough = 0; n_df_fallback = 0; n_df_dn_missing = 0
 for j in 1:myLFES.systemConcept.DOFS
     if j in accept_caps
         # Accept capabilities: no delivery factor
@@ -497,6 +500,15 @@ for j in 1:myLFES.systemConcept.DOFS
             N_capDF[j] = missing; P_capDF[j] = missing; continue
         end
 
+        # River segment with no land area (no CAST factor): treat as pass-through (DF = 1).
+        # Previously these got DF = 0 (all inflow retained). Expected to carry little or no load;
+        # compare results with the baseline run to confirm.
+        if isnan(FS_RIV[riv_up].R2B_N)
+            N_capDF[j] = 1.0; P_capDF[j] = 1.0
+            global n_df_passthrough += 1
+            continue
+        end
+
         # If downstream is estuary -> just R2B(up)
         if is_estuary_destination(tp_idx)
             N_capDF[j] = FS_RIV[riv_up].R2B_N
@@ -506,8 +518,15 @@ for j in 1:myLFES.systemConcept.DOFS
             riv_dn = canon_riv(get(d, :segment, nothing))
             if riv_dn === nothing || !haskey(FS_RIV, riv_dn)
                 # If we can't identify downstream riv, fall back to R2B(up)
+                # (checked 2026-10: never triggered for the 2024 network)
                 N_capDF[j] = FS_RIV[riv_up].R2B_N
                 P_capDF[j] = FS_RIV[riv_up].R2B_P
+                global n_df_fallback += 1
+            elseif isnan(FS_RIV[riv_dn].R2B_N)
+                # Downstream segment has no CAST factor: treat it as delivering without loss
+                N_capDF[j] = FS_RIV[riv_up].R2B_N
+                P_capDF[j] = FS_RIV[riv_up].R2B_P
+                global n_df_dn_missing += 1
             else
                 N_dn = FS_RIV[riv_dn].R2B_N
                 P_dn = FS_RIV[riv_dn].R2B_P
@@ -523,6 +542,8 @@ for j in 1:myLFES.systemConcept.DOFS
     end
 end
 
+println("Outlet DF special cases: pass-through (no-area segment) = $n_df_passthrough, ",
+        "fallback (downstream not found) = $n_df_fallback, downstream factor missing = $n_df_dn_missing")
 println("Per-capability delivery factors set. ",
         "N: ", count(!ismissing, N_capDF), "/", length(N_capDF),
         " | P: ", count(!ismissing, P_capDF), "/", length(P_capDF))

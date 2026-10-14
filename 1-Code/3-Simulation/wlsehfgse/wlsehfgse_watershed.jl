@@ -256,25 +256,10 @@ for j in transport_caps
 end
 println("Outlet to Outlet caps: N=$(length(caps_oo_N)), P=$(length(caps_oo_P))")
 
-# Totals from CAST
-sum_EOS_N = sum(values(EOS_N))
-sum_EOS_P = sum(values(EOS_P))
-sum_EOT_N = sum(values(EOT_N))
-sum_EOT_P = sum(values(EOT_P))
-
-# Enforce:  sum of(outlet to outlet U)  =  sum of EOS − sum of EOT  (per nutrient)
-for k in 1:numTimeSteps
-    @constraint(model,
-        sumU(caps_oo_N, k) - (sum_EOS_N - sum_EOT_N) == sumEU(caps_oo_N, k)
-    )
-    @constraint(model,
-        sumU(caps_oo_P, k) - (sum_EOS_P - sum_EOT_P) == sumEU(caps_oo_P, k)
-    )
-end
-
-# Count constraints
-numConstraintsAfterST = JuMP.num_constraints(model, count_variable_in_set_constraints=true)
-numStreamTideConstraints = numConstraintsAfterST - numConstraintsAfterEOT
+# NOTE (2026-10 revision): the former "stream-to-tide" constraint, which set the SUM of all
+# outlet->outlet flows equal to sum(EOS) - sum(EOT), was removed. A sum of link flows counts the
+# same mass once per link it traverses, while EOS - EOT is the mass lost in transit, so the two
+# quantities are not comparable. caps_oo_N/P are kept for diagnostics and maps only.
 
 ### Building Objective Function
 
@@ -301,22 +286,6 @@ beta  = 1e-12
 )
 
 optimize!(model)
-
-println("Status: ", termination_status(model))
-if termination_status(model) == MOI.OPTIMAL
-    U_opt  = value.(U)
-    QB_opt = value.(QB)
-
-    println("Solution found!")
-
-    # Create cap_results structure for mapping/plots
-    cap_results = (U = U_opt, QB = QB_opt)
-
-else
-    println("Optimization failed: ", termination_status(model))
-    cap_results = (U = zeros(myLFES.systemConcept.DOFS),
-                   QB = zeros(size(myLFES.engSysNet.Mpos,1), 2))
-end
 
 println("Status: ", termination_status(model))
 if termination_status(model) == MOI.OPTIMAL
@@ -499,32 +468,6 @@ if termination_status(model) == MOI.OPTIMAL
             " (", round(eotP_pcterr; digits=2), "% )")
 
     #######################################
-    # 5. Outlet->Outlet (stream->tide) diagnostics
-    #######################################
-
-    stN_target = sum(values(EOS_N)) - sum(values(EOT_N))
-    stP_target = sum(values(EOS_P)) - sum(values(EOT_P))
-
-    stN_model = sum(U_opt[j,1] for j in caps_oo_N)
-    stP_model = sum(U_opt[j,1] for j in caps_oo_P)
-
-    stN_resid = stN_model - stN_target
-    stP_resid = stP_model - stP_target
-
-    stN_pcterr = abs(stN_target) > 0 ? 100*abs(stN_resid)/abs(stN_target) : NaN
-    stP_pcterr = abs(stP_target) > 0 ? 100*abs(stP_resid)/abs(stP_target) : NaN
-
-    println("\n==== STREAM->TIDE (OUTLET->OUTLET AGGREGATE) ====")
-    println("N: target = ", round(stN_target; digits=3),
-            ", model = ", round(stN_model; digits=3),
-            ", abs err = ", round(abs(stN_resid); digits=3),
-            " (", round(stN_pcterr; digits=2), "% )")
-    println("P: target = ", round(stP_target; digits=3),
-            ", model = ", round(stP_model; digits=3),
-            ", abs err = ", round(abs(stP_resid); digits=3),
-            " (", round(stP_pcterr; digits=2), "% )")
-
-    #######################################
     # 6. WLSE objective contribution from EU
     #######################################
 
@@ -536,12 +479,6 @@ if termination_status(model) == MOI.OPTIMAL
 
     # transport_caps is your existing vector of capability indices
     E_trans_caps = [EU_opt[j, 1] for j in transport_caps]
-
-    _stats(v) = isempty(v) ? (rmse=0.0, max=0.0, med=0.0, meanabs=0.0) :
-        (rmse    = sqrt(mean(v.^2)),
-        max     = maximum(abs.(v)),
-        med     = median(abs.(v)),
-        meanabs = mean(abs.(v)))
 
     st_trans = _stats(E_trans_caps)
 
@@ -601,4 +538,4 @@ println("Number of Accept Nutrient Constraints Per Nutrient Per Sector: $numAppl
 println("Number of Transport Constraints: $numTransportConstraints")
 println("Number of EOS Constraints: $numEOSConstraints")
 println("Number of EOT Constraints: $numEOTConstraints")
-println("Number of stream to tide constraints: $numStreamTideConstraints")
+

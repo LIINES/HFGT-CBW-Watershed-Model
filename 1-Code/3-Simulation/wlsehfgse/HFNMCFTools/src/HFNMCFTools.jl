@@ -22,7 +22,7 @@ module HFNMCFTools
 
 using PrettyPrint
 using JSON3, JuMP
-using CPLEX, Gurobi, HiGHS
+using Gurobi, HiGHS   # CPLEX removed: not used by the watershed estimator and requires a separate IBM install
 using SparseArrays, CSV, DataFrames
 using PrecompileTools: @setup_workload, @compile_workload         # This is a small dependency
 
@@ -236,7 +236,7 @@ end
 function buildHFNMCFProblem(myLFES)
     println("Building Optimization Model")
     if lowercase(myLFES.optimizer) == "cplex"
-        HFNMCF = Model(CPLEX.Optimizer)
+        error("CPLEX support was removed from HFNMCFTools; use \"gurobi\" or \"highs\".")
     elseif lowercase(myLFES.optimizer) == "gurobi"
         HFNMCF = Model(Gurobi.Optimizer)
     else
