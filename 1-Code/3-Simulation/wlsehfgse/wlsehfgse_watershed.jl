@@ -17,6 +17,12 @@ println("Time steps: $numTimeSteps (deltaT = $deltaT)")
 # Simple county & segment identification
 SECT = ["Agriculture","Developed"]
 
+# Run options
+# USE_EOT: include the CAST edge-of-tide (estuary) totals as a measurement.
+# For the hold-out run, type `USE_EOT = false` in Julia before include(...).
+if !@isdefined(USE_EOT); USE_EOT = true; end
+println("USE_EOT = $USE_EOT")
+
 # Use existing CountyKey coverage
 applied_keys = String.(collect(skipmissing(applied_df.CountyKey)))
 loads_keys   = String.(collect(skipmissing(loads_df.CountyKey)))
@@ -26,7 +32,13 @@ println("Found $(length(counties)) counties with coverage")
 ### Variables ###
 @variable(model, QB[1:size(myLFES.engSysNet.Mpos,1), 1:numTimeSteps+1] >= 0)
 @variable(model, U[1:myLFES.systemConcept.DOFS, 1:numTimeSteps] >= 0)
-@variable(model, EU[1:myLFES.systemConcept.DOFS, 1:numTimeSteps])
+# Measurement errors: ONE error variable per measurement equation (Eq. 1c).
+# (Before 2026-10, a single EU per capability was shared across the transport, EOS, EOT and
+#  stream-to-tide equations, which turned those aggregates into exact constraints.)
+@variable(model, EU[1:myLFES.systemConcept.DOFS, 1:numTimeSteps])                    # transport equations (accept caps unused -> 0)
+@variable(model, E_app[c in counties, s in SECT, n in [:N, :P], k in 1:numTimeSteps]) # applied, county x sector
+@variable(model, E_eos[c in counties, n in [:N, :P], k in 1:numTimeSteps])            # EOS, county
+@variable(model, E_eot[n in [:N, :P], k in 1:numTimeSteps])                           # EOT, watershed total
 
 # Starting counter for constraints written
 numConstraintsAfterVariableDefinition = JuMP.num_constraints(model, count_variable_in_set_constraints=true)
@@ -122,8 +134,8 @@ for c in counties, s in SECT
     capsN = get(ACCEPT_BY_CSN, (c, s, :N), Int[])
     capsP = get(ACCEPT_BY_CSN, (c, s, :P), Int[])
     for k in 1:numTimeSteps
-        @constraint(model, sumU(capsN, k) - rhsN == sumEU(capsN, k))
-        @constraint(model, sumU(capsP, k) - rhsP == sumEU(capsP, k))
+        @constraint(model, sumU(capsN, k) - rhsN == E_app[c, s, :N, k])
+        @constraint(model, sumU(capsP, k) - rhsP == E_app[c, s, :P, k])
     end
 end
 
@@ -193,14 +205,14 @@ for c in counties
     capsN = land2stream_caps_in_county(c, :N)
     if !isempty(capsN) && haskey(EOS_N, c)
         for k in 1:numTimeSteps
-            @constraint(model, sumU(capsN, k) - EOS_N[c] == sumEU(capsN, k))
+            @constraint(model, sumU(capsN, k) - EOS_N[c] == E_eos[c, :N, k])
         end
     end
 
     capsP = land2stream_caps_in_county(c, :P)
     if !isempty(capsP) && haskey(EOS_P, c)
         for k in 1:numTimeSteps
-            @constraint(model, sumU(capsP, k) - EOS_P[c] == sumEU(capsP, k))
+            @constraint(model, sumU(capsP, k) - EOS_P[c] == E_eos[c, :P, k])
         end
     end
 end
@@ -229,10 +241,14 @@ println("EOT sources: N=$(length(caps_est_N)) caps, P=$(length(caps_est_P)) caps
 sum_EOT_N = sum(v for (_,v) in EOT_N)
 sum_EOT_P = sum(v for (_,v) in EOT_P)
 
-# Tie the CAST bay totals to the modeled inflow INTO the estuary
-for k in 1:numTimeSteps
-    @constraint(model, sumU(caps_est_N, k) - sum_EOT_N == sumEU(caps_est_N, k))
-    @constraint(model, sumU(caps_est_P, k) - sum_EOT_P == sumEU(caps_est_P, k))
+# Tie the CAST bay totals to the modeled inflow INTO the estuary (skipped in the hold-out run)
+if USE_EOT
+    for k in 1:numTimeSteps
+        @constraint(model, sumU(caps_est_N, k) - sum_EOT_N == E_eot[:N, k])
+        @constraint(model, sumU(caps_est_P, k) - sum_EOT_P == E_eot[:P, k])
+    end
+else
+    println("HOLD-OUT RUN: EOT totals are NOT used in estimation; EOT diagnostics below are predictions.")
 end
 
 # Count constraints
@@ -273,12 +289,19 @@ CU = fill(1.0, numCaps)
 # With CU[j] = 1.0, this gives w_E[j] = 1 / max(1^2, 2) = 0.5 for all j
 w_E = [1.0 / max(CU[j]^2, 2.0) for j in 1:numCaps]
 
+# Uniform weight on the aggregate measurement errors (F_E = 1/2 I, same as w_E above)
+w_meas = 0.5
+
 alpha = 1e-10
 beta  = 1e-12
 
 @objective(model, Min,
     # E_Uᵀ F_E E_U  = Σ_j Σ_k w_E[j] * EU[j,k]^2
     sum(w_E[j] * sum(EU[j, k]^2 for k in 1:numTimeSteps) for j in 1:numCaps) +
+    # applied, EOS and EOT measurement errors
+    w_meas * (sum(x^2 for x in E_app) +
+              sum(x^2 for x in E_eos) +
+              sum(x^2 for x in E_eot)) +
     # Uᵀ A_U U with A_U = α I
     alpha * sum(U[j, k]^2 for j in 1:numCaps, k in 1:numTimeSteps) +
     # Q_Bᵀ A_QB Q_B with A_QB = β I (final time step = numTimeSteps + 1)
@@ -457,7 +480,7 @@ if termination_status(model) == MOI.OPTIMAL
     eotN_pcterr = abs(eotN_target) > 0 ? 100*abs(eotN_resid)/abs(eotN_target) : NaN
     eotP_pcterr = abs(eotP_target) > 0 ? 100*abs(eotP_resid)/abs(eotP_target) : NaN
 
-    println("\n==== EOT (ESTUARY TOTALS) ====")
+    println("\n==== EOT (ESTUARY TOTALS) ====", USE_EOT ? "" : "  [HOLD-OUT: prediction, not fitted]")
     println("N: target = ", round(eotN_target; digits=3),
             ", model = ", round(eotN_model; digits=3),
             ", abs err = ", round(abs(eotN_resid); digits=3),
@@ -474,6 +497,17 @@ if termination_status(model) == MOI.OPTIMAL
     # assumes w_E and numTimeSteps are in scope
     Z_EU = sum(w_E[j] * sum(EU_opt[j,k]^2 for k in 1:numTimeSteps) for j in 1:numCaps)
     println("\nWLSE error term (EUᵀ F_E EU): Z_EU = ", round(Z_EU; digits=4))
+
+    # Objective breakdown by measurement type
+    Z_tr  = sum(w_E[j] * EU_opt[j,1]^2 for j in transport_caps)
+    Z_app = w_meas * sum(abs2, value.(E_app))
+    Z_eos = w_meas * sum(abs2, value.(E_eos))
+    Z_eot = w_meas * sum(abs2, value.(E_eot))
+    Z_tot = Z_tr + Z_app + Z_eos + Z_eot
+    println("\n==== OBJECTIVE BREAKDOWN (weighted squared error) ====")
+    for (lbl, z) in (("transport", Z_tr), ("applied", Z_app), ("EOS", Z_eos), ("EOT", Z_eot))
+        println(rpad(lbl, 10), " = ", round(z; sigdigits=4), "  (", round(100*z/Z_tot; digits=2), "%)")
+    end
 
     println("\n==== TRANSPORT CAPABILITY RESIDUALS (EU, TRANSPORT CAPS ONLY) ====")
 
