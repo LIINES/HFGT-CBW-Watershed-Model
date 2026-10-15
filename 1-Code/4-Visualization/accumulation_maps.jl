@@ -103,20 +103,14 @@ seg_xy = build_seg_xy_map(seg_tbl)
 out_xy = build_outlet_xy_map(out_pts)
 
 # Fixed size scaling function - the issue was missing explicit return
-function size_scale_sqrt(v::AbstractVector{<:Real}; smin::Float64=3.0, smax::Float64=26.0)
+# Marker size proportional to sqrt(value), anchored at zero and scaled to vmax.
+# (Revised 2026-10: the old version rescaled between the min and max of whatever values it was
+#  given, so legend circles were sized on a different scale from the data.)
+function size_scale_sqrt(v::AbstractVector{<:Real}; smin::Float64=3.0, smax::Float64=26.0,
+                         vmax::Float64 = isempty(v) ? 0.0 : maximum(max.(0.0, Float64.(v))))
     isempty(v) && return Float64[]
-    vals  = max.(0.0, Float64.(v))
-    tvals = sqrt.(vals)
-    lo, hi = extrema(tvals)
-
-    # handle degenerate range and avoid any eps() shadowing
-    if hi <= lo
-        return fill(smin, length(v))
-    end
-    tiny = Base.eps(Float64)  # <- never shadowed
-    den  = max(hi - lo, tiny)
-
-    return smin .+ (tvals .- lo) .* (smax - smin) ./ den
+    vmax <= 0 && return fill(smin, length(v))
+    return smin .+ (smax - smin) .* sqrt.(clamp.(Float64.(v), 0.0, vmax) ./ vmax)
 end
 
 function add_size_legend!(
@@ -126,8 +120,8 @@ function add_size_legend!(
     markercolor = :gray, pos = :lt
 )
     (isnan(vmax) || vmax <= 0) && return
-    vals   = collect(range(0.25, 1.0; length=nsym)) .* vmax
-    sizes  = size_scale_sqrt(vals; smin=smin, smax=smax)
+    vals   = [round(f * vmax; sigdigits=2) for f in (0.05, 0.25, 0.5, 1.0)][1:min(nsym, 4)]
+    sizes  = size_scale_sqrt(vals; smin=smin, smax=smax, vmax=vmax)   # same scale as the data
     hs     = [CM.scatter!(ax, [NaN], [NaN]; markersize=ms, color=markercolor, strokewidth=0) for ms in sizes]
     labels = [string(round(v; digits=2)) for v in vals]
     
@@ -187,6 +181,8 @@ function collect_QB_points_enhanced(nutrient::Symbol; scale_to_millions::Bool=tr
     return (x=pts_x, y=pts_y, m=mags, kind=kinds)
 end
 
+# Figures (only when :accumulation is in MAPS; the helpers above are always loaded)
+if :accumulation in MAPS
 # N map with million pounds
 datN   = collect_QB_points_enhanced(:N; scale_to_millions=true)
 sizesN = size_scale_sqrt(datN.m; smin=3.0, smax=26.0)
@@ -295,3 +291,4 @@ add_size_legend!(axP_both, vmaxP; title_str="Mass of Phosphorus\n(million lbs)",
 CM.colgap!(figBoth_QB.layout, 0)
 CM.save(joinpath(outdir, "map_accumulation_both.png"), figBoth_QB)
 println("Wrote: map_accumulation_N.png, map_accumulation_P.png, map_accumulation_both.png")
+end # if :accumulation in MAPS
