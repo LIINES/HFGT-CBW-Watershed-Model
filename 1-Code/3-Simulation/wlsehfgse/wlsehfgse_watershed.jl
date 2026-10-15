@@ -309,27 +309,83 @@ println("Outlet to Outlet caps: N=$(length(caps_oo_N)), P=$(length(caps_oo_P))")
 
 numCaps = myLFES.systemConcept.DOFS
 
-# First, fill with ones to ensure capabilities without data (like some transport constraints)
-    # Do not return 1/NaN^2
-CU = fill(1.0, numCaps)
+# ---------------------------------------------------------------------------------------------
+# Measurement vector C_U and error vector E_U (Eq. 1c: D_U U - C_U = E_U), assembled in the same
+# row order. Each row is one measurement equation written above:
+#   applied   (county x sector x nutrient):  sum(accept U)            - applied load  = E_app
+#   transport (one per transport cap):       U_land                   - EOR load      = EU   (LAND_STEP = :eor)
+#                                            U_route - DF * inflow    - 0             = EU   (DF*inflow is part of D_U U)
+#   EOS       (county x nutrient, LAND_STEP = :applied only)
+#   EOT       (nutrient, USE_EOT = true only)
+# For the routing rows the measured quantity is a ratio applied to modeled inflow, so it sits in
+# D_U and the constant part of C_U is 0.
+#
+# WEIGHTS: how F_E is built from C_U
+#   :uniform   F_E = 1/2 I (the weighting used for all results before 2026-10)
+#   :relative  F_E = diag(1 / max(C_U^2, 2)), Eq. 2 of the original manuscript
+if !@isdefined(WEIGHTS); WEIGHTS = :uniform; end
+println("WEIGHTS = $WEIGHTS")
 
-# F_E diagonal: one weight per capability
-# With CU[j] = 1.0, this gives w_E[j] = 1 / max(1^2, 2) = 0.5 for all j
-w_E = [1.0 / max(CU[j]^2, 2.0) for j in 1:numCaps]
+C_U        = Float64[]
+E_U        = VariableRef[]
+meas_group = Symbol[]
+pushmeas!(c, e, g) = (push!(C_U, c); push!(E_U, e); push!(meas_group, g))
 
-# Uniform weight on the aggregate measurement errors (F_E = 1/2 I, same as w_E above)
-w_meas = 0.5
+# applied
+for c in counties, s in SECT
+    pushmeas!(get(N_app_cs, (c, s), 0.0), E_app[c, s, :N, 1], :applied)
+    pushmeas!(get(P_app_cs, (c, s), 0.0), E_app[c, s, :P, 1], :applied)
+end
+# transport
+for i in eachindex(transport_caps)
+    j  = transport_caps[i]
+    cu = (LAND_STEP == :eor && is_land_tr[i]) ? eor_target[i] : 0.0
+    pushmeas!(cu, EU[j, 1], (LAND_STEP == :eor && is_land_tr[i]) ? :land : :routing)
+end
+# EOS (only rows that were written as constraints)
+if LAND_STEP != :eor
+    for c in counties
+        if !isempty(land2stream_caps_in_county(c, :N)) && haskey(EOS_N, c)
+            pushmeas!(EOS_N[c], E_eos[c, :N, 1], :eos)
+        end
+        if !isempty(land2stream_caps_in_county(c, :P)) && haskey(EOS_P, c)
+            pushmeas!(EOS_P[c], E_eos[c, :P, 1], :eos)
+        end
+    end
+end
+# EOT
+if USE_EOT
+    pushmeas!(sum_EOT_N, E_eot[:N, 1], :eot)
+    pushmeas!(sum_EOT_P, E_eot[:P, 1], :eot)
+end
+println("Measurement rows: ", length(C_U), "  ",
+        join(["$g=$(count(==(g), meas_group))" for g in unique(meas_group)], ", "))
 
+# F_E (diagonal)
+w_U = WEIGHTS === :relative ? [1.0 / max(c^2, 2.0) for c in C_U] :
+      WEIGHTS === :uniform  ? fill(0.5, length(C_U)) :
+      error("WEIGHTS must be :uniform or :relative")
+println("F_E diagonal: min = ", round(minimum(w_U); sigdigits=3), ", max = ", round(maximum(w_U); sigdigits=3))
+
+# Error variables that are declared but not part of any measurement equation (accept-cap EU,
+# EOS rows not used, EOT in the hold-out run) are fixed at zero so they do not enter the problem.
+in_EU = Set(E_U)
+for v in vcat(vec(EU), vec(E_eos.data), vec(E_eot.data))   # .data = the array behind a JuMP DenseAxisArray
+    v in in_EU || fix(v, 0.0; force = true)
+end
+
+# Small regularization on flows and stocks (A_U = alpha I, A_QB = beta I). These must stay
+# negligible next to the error terms. With :relative weights the error terms are ~1e-14 times
+# smaller, so alpha and beta are scaled by the median measurement weight (relative to 1/2).
 alpha = 1e-10
 beta  = 1e-12
+reg_scale = WEIGHTS === :relative ? median(w_U[C_U .!= 0.0]) / 0.5 : 1.0
+alpha *= reg_scale; beta *= reg_scale
+println("alpha = ", alpha, ", beta = ", beta, "  (scale ", round(reg_scale; sigdigits=3), ")")
 
 @objective(model, Min,
-    # E_Uᵀ F_E E_U  = Σ_j Σ_k w_E[j] * EU[j,k]^2
-    sum(w_E[j] * sum(EU[j, k]^2 for k in 1:numTimeSteps) for j in 1:numCaps) +
-    # applied, EOS and EOT measurement errors
-    w_meas * (sum(x^2 for x in E_app) +
-              sum(x^2 for x in E_eos) +
-              sum(x^2 for x in E_eot)) +
+    # E_Uᵀ F_E E_U
+    sum(w_U[r] * E_U[r]^2 for r in eachindex(E_U)) +
     # Uᵀ A_U U with A_U = α I
     alpha * sum(U[j, k]^2 for j in 1:numCaps, k in 1:numTimeSteps) +
     # Q_Bᵀ A_QB Q_B with A_QB = β I (final time step = numTimeSteps + 1)
@@ -525,18 +581,14 @@ if termination_status(model) == MOI.OPTIMAL
     # 6. WLSE objective contribution from EU
     #######################################
 
-    # assumes w_E and numTimeSteps are in scope
-    Z_EU = sum(w_E[j] * sum(EU_opt[j,k]^2 for k in 1:numTimeSteps) for j in 1:numCaps)
-    println("\nWLSE error term (EUᵀ F_E EU): Z_EU = ", round(Z_EU; digits=4))
-
-    # Objective breakdown by measurement type
-    Z_tr  = sum(w_E[j] * EU_opt[j,1]^2 for j in transport_caps)
-    Z_app = w_meas * sum(abs2, value.(E_app))
-    Z_eos = w_meas * sum(abs2, value.(E_eos))
-    Z_eot = w_meas * sum(abs2, value.(E_eot))
-    Z_tot = Z_tr + Z_app + Z_eos + Z_eot
+    # Objective breakdown by measurement type: E_Uᵀ F_E E_U split by row group
+    E_U_opt = value.(E_U)
+    Z_by = Dict(g => sum(w_U[r] * E_U_opt[r]^2 for r in eachindex(E_U) if meas_group[r] === g; init = 0.0)
+                for g in unique(meas_group))
+    Z_tot = sum(values(Z_by))
+    println("\nWLSE error term (E_Uᵀ F_E E_U) = ", round(Z_tot; sigdigits=4), "   [WEIGHTS = $WEIGHTS]")
     println("\n==== OBJECTIVE BREAKDOWN (weighted squared error) ====")
-    for (lbl, z) in (("transport", Z_tr), ("applied", Z_app), ("EOS", Z_eos), ("EOT", Z_eot))
+    for (lbl, z) in sort(collect(Z_by); by = first)
         println(rpad(lbl, 10), " = ", round(z; sigdigits=4), "  (", round(100*z/Z_tot; digits=2), "%)")
     end
 
